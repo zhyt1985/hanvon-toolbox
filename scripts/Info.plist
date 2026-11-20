@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>zh_CN</string>
+    <key>CFBundleDisplayName</key>
+    <string>汉王电纸书工具箱</string>
+    <key>CFBundleExecutable</key>
+    <string>HanvonToolbox</string>
+    <key>CFBundleIdentifier</key>
+    <string>local.hanvon.toolbox</string>
+    <key>CFBundleName</key>
+    <string>汉王电纸书工具箱</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>0.3.2</string>
+    <key>CFBundleVersion</key>
+    <string>9</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>26.0</string>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsLocalNetworking</key>
+        <true/>
+    </dict>
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_hanvon-toolbox._tcp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>在同一 Wi-Fi 上发现并连接汉王电纸书，浏览和传输文件。</string>
+</dict>
+</plist>

@@ -1,0 +1,38 @@
+# Build products and local tool state
+.build/
+.swiftpm/
+.DS_Store
+__pycache__/
+*.pyc
+# Signing identities, credentials and machine-local settings
+.android-signing/
+.mac-signing/
+.env
+.env.*
+*.p12
+*.pfx
+*.pem
+*.key
+*.keystore
+*.jks
+*.mobileprovision
+*.xcuserstate
+xcuserdata/
+# Installers and generated archives belong in release attachments
+*.apk
+*.aab
+*.dmg
+*.zip
+*.ipa
+*.app/
+# Real device data and local investigation material
+private/
+local-data/
+device-dumps/
+*.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.psl
+*.hanvonexport/
