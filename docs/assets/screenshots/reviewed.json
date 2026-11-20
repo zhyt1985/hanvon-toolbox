@@ -1,0 +1,20 @@
+{
+  "synthetic_only": true,
+  "images": {
+    "docs/assets/screenshots/file-manager.png": {
+      "sha256": "a8cb21d1f7f56082115d0c1588a8389112dc3b390e27309c6b389f12e345d9c7",
+      "width": 2760,
+      "height": 1560
+    },
+    "docs/assets/screenshots/transfer-queue.png": {
+      "sha256": "cd2a2e1042e96bf6ca0a1d0a7679c250ed9fa0848ba423a8d2032fd4bd821fba",
+      "width": 1880,
+      "height": 1160
+    },
+    "docs/assets/screenshots/content-export.png": {
+      "sha256": "4f2fb49fec589d0e31ed3ed524dec6618c49941751c5910c7e12839c140d1793",
+      "width": 2240,
+      "height": 1480
+    }
+  }
+}

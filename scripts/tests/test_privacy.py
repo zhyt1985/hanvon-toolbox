@@ -1,9 +1,13 @@
 """Synthetic regression checks for repository privacy boundaries."""
 import importlib.util
+import hashlib
+import json
 from pathlib import Path
 import subprocess
 import tempfile
+import struct
 import unittest
+import zlib
 
 SCRIPT = Path(__file__).resolve().parents[1] / 'privacy-check.py'
 spec = importlib.util.spec_from_file_location('privacy_guard', SCRIPT)
@@ -12,6 +16,61 @@ spec.loader.exec_module(guard)
 
 
 class PrivacyTests(unittest.TestCase):
+    @staticmethod
+    def png(extra=b''):
+        def chunk(kind, data):
+            return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data))
+        return (b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', 1, 1, 8, 2, 0, 0, 0))
+                + extra + chunk(b'IDAT', zlib.compress(b'\0\0\0\0')) + chunk(b'IEND', b''))
+
+    def review(self, data):
+        path = 'docs/assets/screenshots/file-manager.png'
+        return {path: dict(sha256=hashlib.sha256(data).hexdigest(), width=1, height=1)}
+
+    def test_only_exact_reviewed_synthetic_png_is_allowed(self):
+        data = self.png()
+        reviews = self.review(data)
+        path = next(iter(reviews))
+        self.assertTrue(guard.scan_blob(path, data))
+        self.assertEqual(guard.scan_blob(path, data, reviews=reviews), [])
+        self.assertTrue(guard.scan_blob(path, data + b'extra', reviews=reviews))
+        self.assertTrue(guard.scan_blob(path, data, '120000', reviews))
+        self.assertTrue(guard.scan_blob('docs/other.png', data, reviews=reviews))
+        wrong_dimensions = self.review(data)
+        wrong_dimensions[path]['width'] = 2
+        self.assertTrue(guard.scan_blob(path, data, reviews=wrong_dimensions))
+
+    def test_even_reviewed_png_rejects_metadata(self):
+        payload = b'Comment\0synthetic text'
+        kind = b'tEXt'
+        extra = struct.pack('>I', len(payload)) + kind + payload + struct.pack('>I', zlib.crc32(kind + payload))
+        data = self.png(extra)
+        self.assertTrue(guard.scan_blob(next(iter(self.review(data))), data, reviews=self.review(data)))
+        bad = dict(synthetic_only=True, images=self.review(data), note='arbitrary text')
+        self.assertTrue(guard.scan_blob(guard.SCREENSHOT_REVIEW, json.dumps(bad).encode()))
+        duplicate = b'{"synthetic_only":"unreviewed text","synthetic_only":true,"images":{}}'
+        self.assertTrue(guard.scan_blob(guard.SCREENSHOT_REVIEW, duplicate))
+
+    def test_screenshot_approval_uses_index_manifest(self):
+        with tempfile.TemporaryDirectory(prefix='privacy-image-test-') as temporary:
+            root = Path(temporary)
+            subprocess.run(['git', 'init', '-q', root], check=True)
+            data = self.png()
+            path = next(iter(self.review(data)))
+            target = root / path
+            target.parent.mkdir(parents=True)
+            target.write_bytes(data)
+            manifest = root / guard.SCREENSHOT_REVIEW
+            manifest.write_text(json.dumps(dict(synthetic_only=True, images=self.review(data))))
+            subprocess.run(['git', '-C', root, 'add', '.'], check=True)
+            command = ['python3', str(SCRIPT), '--staged']
+            self.assertEqual(subprocess.run(command, cwd=root, capture_output=True).returncode, 0)
+            target.write_bytes(self.png() + b'changed')
+            subprocess.run(['git', '-C', root, 'add', path], check=True)
+            manifest.write_text(json.dumps(dict(synthetic_only=True, images=self.review(target.read_bytes()))))
+            # A working-tree review cannot approve a different indexed image.
+            self.assertEqual(subprocess.run(command, cwd=root, capture_output=True).returncode, 1)
+
     def rules(self, text, path='Sources/sample.swift'):
         return {rule for _, _, rule in guard.scan_blob(path, text.encode())}
 
