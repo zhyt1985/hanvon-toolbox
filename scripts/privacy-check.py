@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Local-only index/history guard. Findings never include matched values."""
 import argparse
+import hashlib
 import ipaddress
+import json
 import math
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import sys
+import struct
+import zlib
 from collections import Counter
 
 ROOT_FILES = {'.gitignore', '.gitattributes', 'AGENTS.md', 'README.md', 'CONTRIBUTING.md',
@@ -36,6 +40,58 @@ RULES = {
 LITERAL = re.compile(r'''(?ix)\b(?:password|passwd|secret|token|api_key|apikey|access_key|private_key|serial|device_id|deviceid|fingerprint|pairingcode|pin|account)\s*[:=]\s*["']([^"'\n]+)["']''')
 QUOTED = re.compile(r'''["']([A-Za-z0-9_+/=-]{32,})["']''')
 FAKE = {'token', 'secret', 'identity', 'device', 'device-1', 'device-A', 'device-B', 'id', 'N10', 'snapshot-device'}
+SCREENSHOT_REVIEW = 'docs/assets/screenshots/reviewed.json'
+SCREENSHOTS = {f'docs/assets/screenshots/{name}.png' for name in
+               ('file-manager', 'transfer-queue', 'content-export')}
+
+
+def screenshot_reviews(data):
+    """Only exact synthetic assets; no free-form fields or directory exceptions."""
+    if len(data) > 4096: raise ValueError('oversized screenshot review')
+    def unique_fields(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result: raise ValueError('duplicate screenshot field')
+            result[key] = value
+        return result
+    value = json.loads(data, object_pairs_hook=unique_fields)
+    if set(value) != {'synthetic_only', 'images'} or value['synthetic_only'] is not True:
+        raise ValueError('invalid screenshot review')
+    images = value['images']
+    if not isinstance(images, dict) or not images or not set(images) <= SCREENSHOTS:
+        raise ValueError('invalid screenshot paths')
+    for entry in images.values():
+        if not isinstance(entry, dict) or set(entry) != {'sha256', 'width', 'height'}:
+            raise ValueError('invalid screenshot fields')
+        if not isinstance(entry['sha256'], str) or not re.fullmatch('[0-9a-f]{64}', entry['sha256']):
+            raise ValueError('invalid image digest')
+        if any(type(entry[k]) is not int or not 1 <= entry[k] <= 4096 for k in ('width', 'height')):
+            raise ValueError('invalid image dimensions')
+    return images
+
+
+def reviewed_png(data, review):
+    """Reject changed pixels and metadata; visual review is still required."""
+    if len(data) > 3 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != review['sha256']:
+        return False
+    if data[:8] != b'\x89PNG\r\n\x1a\n': return False
+    position, chunks = 8, []
+    while position + 12 <= len(data):
+        length = struct.unpack('>I', data[position:position + 4])[0]
+        kind = data[position + 4:position + 8]
+        end = position + 12 + length
+        if end > len(data) or kind not in {b'IHDR', b'IDAT', b'IEND', b'sRGB', b'gAMA', b'cHRM', b'pHYs'}:
+            return False
+        payload = data[position + 8:end - 4]
+        if zlib.crc32(kind + payload) != struct.unpack('>I', data[end - 4:end])[0]: return False
+        if kind == b'IHDR':
+            if chunks or length != 13: return False
+            if struct.unpack('>II', payload[:8]) != (review['width'], review['height']): return False
+        chunks.append(kind)
+        position = end
+        if kind == b'IEND':
+            return length == 0 and position == len(data) and chunks[0] == b'IHDR' and b'IDAT' in chunks
+    return False
 
 
 def git(*args):
@@ -84,9 +140,15 @@ def text_findings(path, text):
     return result
 
 
-def scan_blob(path, data, mode='100644'):
+def scan_blob(path, data, mode='100644', reviews=None):
     name_findings = text_findings('<redacted-file-name>', path)
     if name_findings: return name_findings
+    if mode in {'100644', '100755'} and path == SCREENSHOT_REVIEW:
+        try: screenshot_reviews(data)
+        except (ValueError, TypeError, UnicodeError): return [(path, 0, 'invalid-screenshot-review')]
+        return []
+    if mode == '100644' and path in SCREENSHOTS and reviews and path in reviews:
+        return [] if reviewed_png(data, reviews[path]) else [(path, 0, 'unreviewed-or-unsafe-screenshot')]
     parts = PurePosixPath(path).parts
     if not parts or (len(parts) == 1 and path not in ROOT_FILES) or (len(parts) > 1 and parts[0] not in ROOT_DIRS):
         return [(path, 0, 'unreviewed-repository-path')]
@@ -125,11 +187,21 @@ def main():
         if args.message: findings += text_findings('<commit-message>', args.message.read_text())
         refs = git('rev-list', '--all').decode().splitlines() if args.history else []
         for ref in ([None] if args.staged else []) + refs:
-            for mode, oid, path in entries(ref):
-                if (mode, oid, path) in seen: continue
-                seen.add((mode, oid, path))
+            tree = list(entries(ref))
+            reviews, review_oid = {}, None
+            for mode, oid, path in tree:
+                if path == SCREENSHOT_REVIEW and mode == '100644':
+                    review_oid = oid
+                    try: reviews = screenshot_reviews(git('cat-file', 'blob', oid))
+                    except (ValueError, TypeError, UnicodeError): pass
+            if not set(reviews) <= {path for _, _, path in tree}:
+                findings.append((SCREENSHOT_REVIEW, 0, 'missing-reviewed-screenshot'))
+            for mode, oid, path in tree:
+                version = (mode, oid, path, review_oid if path in SCREENSHOTS else None)
+                if version in seen: continue
+                seen.add(version)
                 if oid not in cache: cache[oid] = git('cat-file', 'blob', oid) if mode in {'100644', '100755'} else b''
-                findings += scan_blob(path, cache[oid], mode)
+                findings += scan_blob(path, cache[oid], mode, reviews)
             if ref:
                 metadata = git('show', '-s', '--format=%an%n%ae%n%cn%n%ce%n%B', ref).decode()
                 findings += text_findings('<commit-metadata>', metadata)
